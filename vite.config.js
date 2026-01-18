@@ -6,7 +6,7 @@ import vueDevTools from 'vite-plugin-vue-devtools'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/sitp_kanji/',
+  base: '/sitp_kanji/',//
   plugins: [
     vue(),
     vueDevTools(),
