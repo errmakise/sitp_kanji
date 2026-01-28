@@ -1,17 +1,12 @@
 <script setup>
 // 依赖：Vue 响应式能力与收藏服务函数
-import { onMounted, ref } from 'vue'
-import {
-  changeCurrentFolder,
-  createFolder,
-  initCollections,
-  isCollectedId,
-  renameFolder,
-  deleteFolder as deleteFolderService,
-  loadCharDB,
-} from '../services/kanjiService'
+import { onMounted, ref, watch } from 'vue'
+import { loadCharDB, getCharById } from '@/api/kanji'
+import { useUserStore } from '@/stores/userStore'
 import CollectionPopup from './CollectionPopup.vue'
 import KanjiComparisonCard from './KanjiComparisonCard.vue'
+
+const userStore = useUserStore()
 
 // 收藏夹名称列表与当前选择的收藏夹
 const folderNames = ref([])
@@ -24,26 +19,32 @@ const popupTargetId = ref('')
 // 当前展开详情的条目 id 列表
 const expandedIds = ref([])
 
-// 根据服务层快照更新本地状态
-function loadFolderState(state) {
-  folderNames.value = state.folderNames
-  selectedFolder.value = state.currentFolder
-  collectionEntries.value = state.currentFolderEntries
-  expandedIds.value = []
+// 刷新数据
+function refresh() {
+  folderNames.value = userStore.getFolderNames()
+  if (!userStore.collectionsByFolder[selectedFolder.value]) {
+      selectedFolder.value = '默认收藏'
+  }
+  const ids = userStore.collectionsByFolder[selectedFolder.value] || []
+  collectionEntries.value = ids.map(id => getCharById(id)).filter(Boolean)
 }
 
 // 挂载时初始化收藏数据
-onMounted(async () => {
-  await loadCharDB()
-  const state = initCollections()
-  loadFolderState(state)
+onMounted(() => {
+  // DB already loaded in App init ideally, butensure it
+  loadCharDB()
+  refresh()
 })
+
+// 监听 store 变化自动刷新
+watch(() => userStore.collectionsByFolder, () => {
+    refresh()
+}, { deep: true })
 
 // 切换当前收藏夹
 function onFolderChange(event) {
-  const value = event.target.value
-  const state = changeCurrentFolder(value)
-  loadFolderState(state)
+  selectedFolder.value = event.target.value
+  refresh()
 }
 
 // 点击星标：弹出收藏弹窗编辑该条目所在收藏夹
@@ -53,10 +54,9 @@ function toggleCollection(id) {
   showCollectionPopup.value = true
 }
 
-// 弹窗完成：重新拉取当前收藏夹快照
+// 弹窗回调
 function handleCollectionUpdated() {
-  const state = changeCurrentFolder(selectedFolder.value)
-  loadFolderState(state)
+  refresh()
 }
 
 // 切换某个条目的详情展开/收起
@@ -79,8 +79,9 @@ function promptAddFolder() {
   const name = window.prompt('新建收藏夹名称：')
   if (!name || !name.trim()) return
   const trimmed = name.trim()
-  const state = createFolder(trimmed)
-  loadFolderState(state)
+  userStore.createFolder(trimmed)
+  selectedFolder.value = trimmed
+  refresh()
 }
 
 // 重命名当前收藏夹
@@ -89,8 +90,9 @@ function promptRenameFolder() {
   const name = window.prompt('重命名收藏夹：', oldName)
   if (!name || !name.trim() || name === oldName) return
   const trimmed = name.trim()
-  const state = renameFolder(oldName, trimmed)
-  loadFolderState(state)
+  userStore.renameFolder(oldName, trimmed)
+  selectedFolder.value = trimmed
+  refresh()
 }
 
 // 删除当前收藏夹；条目会并入“默认收藏”
@@ -99,8 +101,8 @@ function promptDeleteFolder() {
   if (name === '默认收藏') return
   const ok = window.confirm(`确定要删除收藏夹「${name}」吗？条目会并入「默认收藏」。`)
   if (!ok) return
-  const state = deleteFolderService(name)
-  loadFolderState(state)
+  userStore.deleteFolder(name)
+  refresh()
 }
 </script>
 
@@ -181,11 +183,11 @@ function promptDeleteFolder() {
             <div class="right-controls">
               <span
                 class="collection-btn"
-                :class="{ collected: isCollectedId(entry.id) }"
+                :class="{ collected: userStore.isCollected(entry.id) }"
                 title="选择收藏夹"
                 @click="toggleCollection(entry.id)"
               >
-                {{ isCollectedId(entry.id) ? '★' : '☆' }}
+                {{ userStore.isCollected(entry.id) ? '★' : '☆' }}
               </span>
               <button
                 type="button"
@@ -200,7 +202,7 @@ function promptDeleteFolder() {
             v-if="isExpanded(entry.id)"
             class="collection-detail-card"
             :entry="entry"
-            :collected="isCollectedId(entry.id)"
+            :collected="userStore.isCollected(entry.id)"
             :show-details="true"
             :show-collection-button="false"
             :show-diff-badge="entry.is_diff === '否'"

@@ -138,7 +138,7 @@
       <KanjiComparisonCard
         v-if="currentExercise && lastAnswerCorrect !== null"
         :entry="currentExercise.entry"
-        :collected="isCollectedId(currentExercise.entry.id)"
+        :collected="userStore.isCollected(currentExercise.entry.id)"
         @toggle-collection="toggleCollection"
       />
     </div>
@@ -175,7 +175,7 @@
           >
             <KanjiComparisonCard
               :entry="item.entry"
-              :collected="isCollectedId(item.entry.id)"
+              :collected="userStore.isCollected(item.entry.id)"
               @toggle-collection="toggleCollection"
             />
           </div>
@@ -197,7 +197,7 @@
           >
             <KanjiComparisonCard
               :entry="item.entry"
-              :collected="isCollectedId(item.entry.id)"
+              :collected="userStore.isCollected(item.entry.id)"
               @toggle-collection="toggleCollection"
             />
           </div>
@@ -223,27 +223,19 @@
 
 <script setup>
 // 依赖：Vue 响应式、服务层练习与收藏 API、朗读能力、复用的展示与收藏弹窗组件
-import { computed, onMounted, ref } from 'vue'
-import {
-  answerCurrentExercise,
-  getExerciseResultData,
-  getExerciseSession,
-  loadCharDB,
-  createNextExercise,
-  resetExercise,
-  isCollectedId,
-} from '../services/kanjiService'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useUserStore } from '@/stores/userStore'
+import { loadCharDB } from '@/api/kanji'
 import { useSpeechSynthesis } from '../composables/useSpeechSynthesis'
 import KanjiComparisonCard from './KanjiComparisonCard.vue'
 import CollectionPopup from './CollectionPopup.vue'
 
+const userStore = useUserStore()
+
 // 页面加载与状态
 const loading = ref(true)
 const loadError = ref('')
-// 当前练习会话（题号、总题数、得分、日志）
-const exerciseSession = ref(null)
-// 当前题目对象：包含题型、题面字、答案字、语言等
-const currentExercise = ref(null)
+
 // 最近一次作答反馈文本与标志
 const exerciseFeedback = ref('')
 const showReveal = ref(false)
@@ -251,26 +243,47 @@ const showResult = ref(false)
 const lastAnswerCorrect = ref(null)
 // 当前题目是否可以进入下一题（控制“下一个”按钮显示）
 const canGoNext = ref(false)
-// 总结结果：包含 right/wrong 列表与总分
-const exerciseResult = ref(null)
+
 // 收藏弹窗开关与目标条目 id
 const showCollectionPopup = ref(false)
 const popupTargetId = ref('')
 
-// 朗读：用于写字题中的“播放日文音读”
+// 朗读
 const { speak } = useSpeechSynthesis()
 
-// 顶部状态文案：加载中/未开始/题号与得分
+// Getter helpers for template
+const currentExercise = computed(() => userStore.currentExercise)
+const exerciseSession = computed(() => userStore.exerciseSession)
+
+// 顶部状态文案
 const exerciseStatusText = computed(() => {
   if (loading.value) return '准备中...'
   if (!exerciseSession.value) return '请开始练习'
   return `第 ${exerciseSession.value.index}/${exerciseSession.value.total} 题｜当前得分 ${exerciseSession.value.score}`
 })
 
-// 初始化：加载字符库 + 开始第一题
+// 总结结果计算
+const exerciseResult = computed(() => {
+    if (!showResult.value || !exerciseSession.value) return null
+    const right = []
+    const wrong = []
+    const log = exerciseSession.value.log || []
+    log.forEach(item => {
+        if (item.correct) right.push(item)
+        else wrong.push(item)
+    })
+    return {
+        score: exerciseSession.value.score,
+        totalScore: (exerciseSession.value.total || 0) * 10,
+        right,
+        wrong
+    }
+})
+
+// 初始化
 async function init() {
   try {
-    await loadCharDB()
+    loadCharDB() // Ensure loaded
     startExercise()
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e)
@@ -279,46 +292,48 @@ async function init() {
   }
 }
 
-// 开始下一题（或第一题）：生成题目与重置反馈
+// 开始下一题（或第一题）
 function startExercise() {
-  const { session, exercise } = createNextExercise()
-  exerciseSession.value = session
-  currentExercise.value = exercise
+  userStore.startExercise()
+  resetLocalState()
+}
+
+function resetLocalState() {
   exerciseFeedback.value = ''
   showReveal.value = false
   showResult.value = false
   lastAnswerCorrect.value = null
-  exerciseResult.value = null
-   canGoNext.value = false
+  canGoNext.value = false
 }
 
-// 形状题作答：“是/否”，立即判分并可能在最后一题后生成结果
+// 形状题作答
 function handleShapeAnswer(userAnswer) {
   if (!currentExercise.value || currentExercise.value.type !== 'shape') return
   const correct = userAnswer === currentExercise.value.answer
-  const { session, finished } = answerCurrentExercise(correct)
-  exerciseSession.value = session
+  
+  const { finished } = userStore.submitAnswer(correct)
+  
   lastAnswerCorrect.value = correct
   exerciseFeedback.value = correct ? '正确！(+10)' : '错误！(+0)'
   showReveal.value = true
   canGoNext.value = !finished
   if (finished) {
     showResult.value = true
-    exerciseResult.value = getExerciseResultData()
   }
 }
 
-// 写字题：先“写完了”翻面揭示答案
+// 写字题：翻面
 function revealWritingAnswer() {
   if (!currentExercise.value || currentExercise.value.type !== 'writing') return
   showReveal.value = true
 }
 
-// 写字题自评：“写对了/写错了”，在最后一题后生成结果
+// 写字题自评
 function handleWritingScore(correct) {
   if (!currentExercise.value || currentExercise.value.type !== 'writing') return
-  const { session, finished } = answerCurrentExercise(correct)
-  exerciseSession.value = session
+  
+  const { finished } = userStore.submitAnswer(correct)
+  
   lastAnswerCorrect.value = correct
   exerciseFeedback.value = correct
     ? '自评：写对了！(+10)'
@@ -326,45 +341,44 @@ function handleWritingScore(correct) {
   canGoNext.value = !finished
   if (finished) {
     showResult.value = true
-    exerciseResult.value = getExerciseResultData()
   }
 }
 
-// 切换下一题；如果已经到末尾，则显示结果
+// 切换下一题
 function nextExercise() {
-  if (!exerciseSession.value) return
-  const session = getExerciseSession()
-  if (session && session.index >= session.total) {
-    showResult.value = true
-    exerciseResult.value = getExerciseResultData()
-    return
+  if (!userStore.exerciseSession) return
+  // Check if session finished logic is handled in store or here?
+  // Our store `nextQuestion` updates state.
+  // But wait, if we are at the end, `nextQuestion` might return finished.
+  const session = userStore.exerciseSession
+  if (session.index >= session.total) {
+      showResult.value = true
+      return
   }
-  startExercise()
+  userStore.nextQuestion()
+  resetLocalState()
 }
 
-// 重新开始一组练习
+// 重新开始
 function restartExercise() {
-  resetExercise()
-  startExercise()
+  userStore.startExercise() // Resets session
+  resetLocalState()
 }
 
-// 点击星标：弹出收藏夹选择弹窗
+// 点击星标
 function toggleCollection(id) {
   if (!id) return
   popupTargetId.value = id
   showCollectionPopup.value = true
 }
 
-// 弹窗完成操作：浅拷贝结果促使列表刷新
+// 弹窗回调
 function handleCollectionUpdated() {
-  if (exerciseResult.value) {
-    exerciseResult.value = { ...exerciseResult.value }
-  }
+  // No explicit refresh needed as we use computed properties, but result might need reactive trigger
+  // Since `exerciseResult` is computed from `exerciseSession`, and store state is reactive, it should work.
 }
 
-// 页面挂载后执行初始化
 onMounted(() => {
   init()
 })
-
 </script>

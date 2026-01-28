@@ -8,6 +8,11 @@ import ExerciseView from './components/ExerciseView.vue'
 // 当前激活的视图：search / collection / exercise
 const activeView = ref('search')
 
+import { useUserStore } from '@/stores/userStore'
+
+const userStore = useUserStore()
+userStore.init()
+
 // 切换视图时更新 activeView
 function switchView(view) {
   activeView.value = view
