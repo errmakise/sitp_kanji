@@ -1,13 +1,12 @@
 <script setup>
 // 依赖：Vue 响应式能力与汉字服务函数
 import { computed, onMounted, ref } from 'vue'
-import {
-  isCollectedId,
-  loadCharDB,
-  searchKanji,
-} from '../services/kanjiService'
+import { loadCharDB, searchKanji } from '@/api/kanji'
+import { useUserStore } from '@/stores/userStore'
 import KanjiComparisonCard from './KanjiComparisonCard.vue'
 import CollectionPopup from './CollectionPopup.vue'
+
+const userStore = useUserStore()
 
 // 加载状态与错误信息
 const loading = ref(true)
@@ -23,9 +22,9 @@ const popupTargetId = ref('')
 const hasSearchQuery = computed(() => searchQuery.value.trim().length > 0)
 
 // 初始化：加载字典数据
-async function init() {
+function init() {
   try {
-    await loadCharDB()
+    loadCharDB()
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -96,7 +95,7 @@ onMounted(() => {
           v-for="entry in results"
           :key="entry.id"
           :entry="entry"
-          :collected="isCollectedId(entry.id)"
+          :collected="userStore.isCollected(entry.id)"
           @toggle-collection="toggleCollection"
         />
       </div>

@@ -1,13 +1,9 @@
 <script setup>
 // 通用收藏弹窗：用于选择某个字属于哪些收藏夹
 import { computed, ref, watch } from 'vue'
-import {
-  createFolder,
-  getAllFolderNames,
-  getFoldersOfId,
-  removeIdFromAllFolders,
-  setFoldersForId,
-} from '../services/kanjiService'
+import { useUserStore } from '@/stores/userStore'
+
+const userStore = useUserStore()
 
 // 输入属性：
 // - modelValue：是否展示弹窗（用于 v-model）
@@ -46,8 +42,8 @@ const newFolderName = ref('')
 // 当弹窗打开时，从服务层加载当前条目的收藏夹信息
 function loadState() {
   if (!props.targetId) return
-  folderNames.value = getAllFolderNames()
-  const current = getFoldersOfId(props.targetId)
+  folderNames.value = userStore.getFolderNames()
+  const current = userStore.getFoldersOfId(props.targetId)
   if (current.length) {
     selectedFolders.value = [...current]
   } else {
@@ -88,8 +84,8 @@ function toggleFolder(name) {
 function handleCreateFolder() {
   const name = newFolderName.value.trim()
   if (!name) return
-  createFolder(name)
-  folderNames.value = getAllFolderNames()
+  userStore.createFolder(name)
+  folderNames.value = userStore.getFolderNames()
   if (!selectedFolders.value.includes(name)) {
     selectedFolders.value.push(name)
   }
@@ -102,7 +98,7 @@ function handleConfirm() {
     visible.value = false
     return
   }
-  setFoldersForId(props.targetId, selectedFolders.value)
+  userStore.setFoldersForId(props.targetId, selectedFolders.value)
   emit('updated')
   visible.value = false
 }
@@ -113,7 +109,7 @@ function handleClear() {
     visible.value = false
     return
   }
-  removeIdFromAllFolders(props.targetId)
+  userStore.removeIdFromAllFolders(props.targetId)
   selectedFolders.value = []
   emit('updated')
   visible.value = false

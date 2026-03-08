@@ -12,6 +12,8 @@
     "preview": "vite preview",
     "test:unit": "vitest",
     "lint": "eslint . --fix --cache",
+    "generate": "node scripts/generate-json.js",
+    "prebuild": "npm run generate",
     "format": "prettier --write --experimental-cli src/"
   },
   "dependencies": {
