@@ -14,6 +14,8 @@ export const useUserStore = defineStore('user', () => {
     const exerciseSession = ref(null)
     const currentExercise = ref(null)
     const wrongSet = ref([])
+    // 练习历史记录：[{ timestamp: 123, score: 80, total: 100 }, ...]
+    const exerciseHistory = ref([])
 
     // --- Actions: Init ---
     function init() {
@@ -41,6 +43,12 @@ export const useUserStore = defineStore('user', () => {
             if (rawWrong) {
                 wrongSet.value = JSON.parse(rawWrong)
             }
+
+            // Load History
+            const rawHistory = localStorage.getItem('kanjiExerciseHistory')
+            if (rawHistory) {
+                exerciseHistory.value = JSON.parse(rawHistory)
+            }
         } catch (e) {
             console.error('Failed to load user data', e)
         }
@@ -53,6 +61,10 @@ export const useUserStore = defineStore('user', () => {
 
     watch(wrongSet, (newVal) => {
         localStorage.setItem('kanjiWrongSet', JSON.stringify(newVal))
+    }, { deep: true })
+
+    watch(exerciseHistory, (newVal) => {
+        localStorage.setItem('kanjiExerciseHistory', JSON.stringify(newVal))
     }, { deep: true })
 
     // --- Actions: Collections ---
@@ -101,16 +113,19 @@ export const useUserStore = defineStore('user', () => {
         delete collectionsByFolder.value[oldName]
     }
 
-    function deleteFolder(name) {
+    function deleteFolder(name, mergeToDefault = true) {
         if (!name || !collectionsByFolder.value[name]) return
 
-        // Merge to default
-        ensureFolder('默认收藏')
-        const merged = new Set([
-            ...collectionsByFolder.value['默认收藏'],
-            ...collectionsByFolder.value[name]
-        ])
-        collectionsByFolder.value['默认收藏'] = Array.from(merged)
+        if (mergeToDefault) {
+            // Merge to default
+            ensureFolder('默认收藏')
+            const merged = new Set([
+                ...collectionsByFolder.value['默认收藏'],
+                ...collectionsByFolder.value[name]
+            ])
+            collectionsByFolder.value['默认收藏'] = Array.from(merged)
+        }
+
         delete collectionsByFolder.value[name]
     }
 
@@ -165,12 +180,11 @@ export const useUserStore = defineStore('user', () => {
     function nextQuestion() {
         const { session, exercise, finished } = createNextExercise(exerciseSession.value)
 
-        // If createNextExercise returns a modified session, update it?
-        // Actually our createNextExercise logic mutates the passed session object or returns a new one.
-        // Let's assume it returns updated state.
-
         if (finished) {
-            // End state
+            // End state: record history logic moved to submitAnswer/saveHistory
+            // But if we skipped questions or something?
+            // Actually createNextExercise returns finished if index >= total.
+            // If we are here, it means we asked for next but there are none.
             currentExercise.value = null
         } else {
             exerciseSession.value = session // update index
@@ -192,12 +206,117 @@ export const useUserStore = defineStore('user', () => {
             }
         }
 
+        if (finished) {
+            saveHistory()
+        }
+
         return { finished }
+    }
+
+    function saveHistory() {
+        if (!exerciseSession.value) return
+
+        const finalScore = exerciseSession.value.score
+        const maxScore = (exerciseSession.value.total || 10) * 10
+        const log = exerciseSession.value.log || []
+
+        exerciseHistory.value.unshift({
+            timestamp: Date.now(),
+            score: finalScore,
+            total: maxScore,
+            correctCount: log.filter(x => x.correct).length,
+            totalCount: exerciseSession.value.total,
+            // Save detailed log for history review
+            details: log.map(item => ({
+                id: item.id,
+                entry: item.entry,
+                correct: item.correct
+            }))
+        })
+
+        // Keep history limit
+        if (exerciseHistory.value.length > 50) {
+            exerciseHistory.value.pop()
+        }
     }
 
     function quitExercise() {
         exerciseSession.value = null
         currentExercise.value = null
+    }
+
+    // --- Actions: Import/Export ---
+    function exportData() {
+        return JSON.stringify({
+            collectionsByFolder: collectionsByFolder.value,
+            wrongSet: wrongSet.value,
+            exerciseHistory: exerciseHistory.value,
+            version: 1,
+            timestamp: Date.now()
+        }, null, 2)
+    }
+
+    function importData(jsonString) {
+        try {
+            const data = JSON.parse(jsonString)
+
+            // Check basic structure
+            if (!data || typeof data !== 'object') {
+                 return { success: false, message: '无效的数据格式' }
+            }
+
+            // 1. Restore Collections
+            if (data.collectionsByFolder) {
+                // Merge strategy:
+                Object.keys(data.collectionsByFolder).forEach(folderName => {
+                    if (!collectionsByFolder.value[folderName]) {
+                        collectionsByFolder.value[folderName] = []
+                    }
+                    const existingSet = new Set(collectionsByFolder.value[folderName])
+                    const newItems = data.collectionsByFolder[folderName]
+                    if (Array.isArray(newItems)) {
+                        newItems.forEach(id => existingSet.add(id))
+                    }
+                    collectionsByFolder.value[folderName] = Array.from(existingSet)
+                })
+            }
+
+            // 2. Restore Wrong Set
+            if (data.wrongSet && Array.isArray(data.wrongSet)) {
+                const existingWrong = new Set(wrongSet.value)
+                data.wrongSet.forEach(id => existingWrong.add(id))
+                wrongSet.value = Array.from(existingWrong)
+            }
+
+            // 3. Restore History
+            if (data.exerciseHistory && Array.isArray(data.exerciseHistory)) {
+                // Merge history: unique by timestamp to avoid duplicates if importing same file
+                const existingTimestamps = new Set(exerciseHistory.value.map(x => x.timestamp))
+                const newHistory = data.exerciseHistory.filter(x => !existingTimestamps.has(x.timestamp))
+
+                exerciseHistory.value = [...newHistory, ...exerciseHistory.value]
+                    .sort((a, b) => b.timestamp - a.timestamp)
+                    // Optional: increase limit if user wants to keep all imported history
+                    .slice(0, 100)
+            }
+
+            return { success: true, message: '数据导入成功' }
+        } catch (e) {
+            console.error('Import failed', e)
+            return { success: false, message: '数据解析失败，请检查文件格式' }
+        }
+    }
+
+    function clearAllData() {
+        collectionsByFolder.value = { "默认收藏": [] }
+        legacyCollection.value = []
+        wrongSet.value = []
+        exerciseHistory.value = []
+
+        localStorage.removeItem('kanjiCollectionsByFolder')
+        localStorage.removeItem('kanjiCollection')
+        localStorage.removeItem('kanjiWrongSet')
+        localStorage.removeItem('kanjiExerciseHistory')
     }
 
     return {
@@ -206,6 +325,7 @@ export const useUserStore = defineStore('user', () => {
         exerciseSession,
         currentExercise,
         wrongSet,
+        exerciseHistory,
 
         // Actions
         init,
@@ -222,6 +342,10 @@ export const useUserStore = defineStore('user', () => {
         startExercise,
         nextQuestion,
         submitAnswer,
-        quitExercise
+        quitExercise,
+
+        exportData,
+        importData,
+        clearAllData
     }
 })

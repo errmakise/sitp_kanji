@@ -59,7 +59,7 @@ function handleToggleCollection() {
     <!-- 收藏星标 -->
     <span
       v-if="showCollectionButton"
-      class="collection-btn"
+      class="collection-btn card-collection-btn"
       :class="{ collected }"
       title="选择收藏夹"
       @click="handleToggleCollection"
@@ -142,3 +142,13 @@ function handleToggleCollection() {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 仅在卡片内部恢复绝对定位 */
+.card-collection-btn {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  /* 确保在 Grid/List 视图中不会因为 relative 而位置错乱 */
+}
+</style>

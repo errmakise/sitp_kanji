@@ -90,3 +90,38 @@ export function searchKanji(query) {
         )
     })
 }
+
+/**
+ * Analyze text and extract known kanji entries.
+ * Returns a list of unique entries found in the text.
+ *
+ * @param {string} text
+ * @returns {Array} List of entries
+ */
+export function analyzeText(text) {
+    if (!text) return []
+
+    // Use Set to deduplicate characters found
+    const foundChars = new Set()
+    const results = []
+    const seenIds = new Set() // To avoid adding same entry via different chars (e.g. if mapped differently)
+
+    for (const char of text) {
+        // Skip common non-kanji chars early to optimize?
+        // Actually map lookup is O(1), so it's fast.
+        if (foundChars.has(char)) continue
+
+        // Check JP map first, then CN map
+        let entry = jpCharMap.get(char) || cnCharMap.get(char)
+
+        if (entry) {
+            foundChars.add(char)
+            if (!seenIds.has(entry.id)) {
+                seenIds.add(entry.id)
+                results.push(entry)
+            }
+        }
+    }
+
+    return results
+}
